@@ -1,5 +1,12 @@
 # Builds self-contained Editor binaries for every supported platform and publishes them as a
 # GitHub Release, triggered by pushing a version tag (e.g. `v1.0-preview`, `v1.2.3`).
+#
+# Prowl.Editor.csproj supports two modes for the Anthology libraries (Ember, Origami, Graphite,
+# Photonic, Rosetta, Unwrapper):
+#   - '$(ProwlLocalAnthology)' == 'true'  -> build from the Anthology sources
+#   - otherwise                           -> consume NuGet packages
+# The `Prowl.Graphite.Debugger.Viewer` package is not on nuget.org, so we build everything
+# from the Anthology sources: check the repo out and pass `-p:ProwlLocalAnthology=true`.
 
 name: Release
 
@@ -7,6 +14,13 @@ name: Release
   push:
     tags:
       - 'v*'
+
+env:
+  # ⚠️ VERIFY these values against the real Anthology repository used by Prowl Engine.
+  # If the Anthology repo is private, you must also add a PAT with `repo` scope as
+  # a repository secret (e.g. ANTHOLOGY_TOKEN) and uncomment the `token:` line below.
+  ANTHOLOGY_REPO: ProwlEngine/Anthology
+  ANTHOLOGY_REF: main
 
 jobs:
   build:
@@ -18,7 +32,19 @@ jobs:
         runtime: [win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Prowl
+        uses: actions/checkout@v4
+
+      # Prowl.Editor.csproj resolves Anthology projects at paths like
+      #   $(AnthologyDir)Graphite\Debugger\Viewer\Prowl.Graphite.Debugger.Viewer.csproj
+      # so we check the repo out at a known location and point AnthologyDir at it.
+      - name: Checkout Anthology
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ANTHOLOGY_REPO }}
+          ref: ${{ env.ANTHOLOGY_REF }}
+          path: _anthology
+          # token: ${{ secrets.ANTHOLOGY_TOKEN }}   # uncomment for a private Anthology repo
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -32,6 +58,8 @@ jobs:
           --runtime ${{ matrix.runtime }}
           --self-contained true
           --output ./publish/${{ matrix.runtime }}/Prowl
+          -p:ProwlLocalAnthology=true
+          -p:AnthologyDir=${{ github.workspace }}/_anthology/
 
       # macOS ships as a real Prowl.app bundle, not a bare folder. Not code-signed/notarized:
       # Gatekeeper still warns "unidentified developer" until the user right-clicks Open.
