@@ -39,6 +39,19 @@ jobs:
           path: Anthology
           fetch-depth: 0
 
+      - name: Verify Anthology structure
+        shell: pwsh
+        run: |
+          Write-Host "Contents of Anthology folder:"
+          Get-ChildItem -Path Anthology -Recurse -Depth 2 | Select-Object FullName
+          $expectedFile = "Anthology\Aperture\Aperture\Aperture.csproj"
+          if (-not (Test-Path $expectedFile)) {
+            Write-Error "Expected file not found: $expectedFile"
+            exit 1
+          } else {
+            Write-Host "Found expected file: $expectedFile"
+          }
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
