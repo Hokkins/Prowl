@@ -1,0 +1,81 @@
+name: Build Prowl Engine (Windows)
+
+on:
+  push:
+    branches: [ main, develop, 'release/**' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '11.0.x'
+  DOTNET_QUALITY: 'preview'
+
+jobs:
+  build:
+    name: Build ${{ matrix.configuration }}
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+      fail-fast: false
+
+    steps:
+      - name: Skip Duplicate Actions
+        uses: step-security/skip-duplicate-actions@v5
+        with:
+          cancel_others: true
+          concurrent_skipping: 'same_content_newer'
+
+      - name: Checkout Prowl
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout Anthology
+        uses: actions/checkout@v4
+        with:
+          repository: ProwlEngine/Anthology
+          path: Anthology
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: ${{ env.DOTNET_QUALITY }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Create prowl.local.props
+        shell: pwsh
+        run: |
+          @'
+          <Project>
+            <PropertyGroup>
+              <ProwlLocalAnthology>true</ProwlLocalAnthology>
+            </PropertyGroup>
+          </Project>
+          '@ | Out-File -FilePath prowl.local.props -Encoding utf8
+
+      - name: Restore dependencies
+        run: dotnet restore Prowl.slnx
+
+      - name: Build solution
+        run: dotnet build Prowl.slnx --configuration ${{ matrix.configuration }} --no-restore
+
+      - name: Upload Editor artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Prowl-Editor-${{ matrix.configuration }}
+          path: |
+            Prowl.Editor/bin/${{ matrix.configuration }}/
+            Prowl.Runtime/bin/${{ matrix.configuration }}/
+          if-no-files-found: error
+
+      - name: Upload Runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Prowl-Runtime-${{ matrix.configuration }}
+          path: Prowl.Runtime/bin/${{ matrix.configuration }}/
+          if-no-files-found: error
