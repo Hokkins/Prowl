@@ -1,0 +1,90 @@
+# Builds self-contained Editor binaries for every supported platform on every push,
+# pull request, or manual dispatch, and uploads them as downloadable artifacts.
+# Does NOT create a GitHub Release — that is release.yml's job, triggered by tags.
+
+name: Build
+
+"on":
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Cancel an in-progress run for the same ref when a new commit lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '11.0.x'
+
+      - name: Publish (${{ matrix.runtime }})
+        run: >
+          dotnet publish ./Prowl.Editor/Prowl.Editor.csproj
+          --configuration Release
+          --runtime ${{ matrix.runtime }}
+          --self-contained true
+          --output ./publish/${{ matrix.runtime }}/Prowl
+
+      # macOS ships as a real Prowl.app bundle, not a bare folder. Not code-signed/notarized:
+      # Gatekeeper still warns "unidentified developer" until the user right-clicks Open.
+      # Version fields are CI placeholders: Info.plist wants integer-like versions, so we use
+      # a static 0.0.0 + the CI run number. The actual commit SHA goes into the zip filename.
+      - name: Bundle macOS .app (${{ matrix.runtime }})
+        if: startsWith(matrix.runtime, 'osx-')
+        run: |
+          set -e
+          PUB="./publish/${{ matrix.runtime }}/Prowl"
+          APP="./publish/${{ matrix.runtime }}/Prowl.app"
+          mkdir -p "$APP/Contents/MacOS"
+          mv "$PUB"/* "$APP/Contents/MacOS/"
+          rmdir "$PUB"
+          chmod +x "$APP/Contents/MacOS/Prowl.Editor"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>Prowl</string>
+              <key>CFBundleDisplayName</key><string>Prowl Editor</string>
+              <key>CFBundleExecutable</key><string>Prowl.Editor</string>
+              <key>CFBundleIdentifier</key><string>com.prowlengine.editor</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+              <key>CFBundleVersion</key><string>${{ github.run_number }}</string>
+              <key>CFBundleShortVersionString</key><string>0.0.0</string>
+              <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Zip
+        run: |
+          cd ./publish/${{ matrix.runtime }}
+          SHORT_SHA="${GITHUB_SHA::7}"
+          OUT="../../Prowl-${SHORT_SHA}-${{ matrix.runtime }}.zip"
+          if [ -d "Prowl.app" ]; then
+            zip -r "$OUT" Prowl.app
+          else
+            zip -r "$OUT" Prowl
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Prowl-${{ matrix.runtime }}
+          path: Prowl-*-${{ matrix.runtime }}.zip
+          retention-days: 14
